@@ -16,6 +16,7 @@ use meshtastic::types::{MeshChannel, NodeId};
 use meshtastic::utils;
 use meshtastic::utils::stream::BleId;
 use serde::{Deserialize, Serialize};
+use teloxide::{prelude::*, types::ChatId};
 use time::OffsetDateTime;
 
 const STORAGE_FILE: &str = "storage.json";
@@ -87,46 +88,6 @@ impl Storage {
         println!("------------------------------------------");
     }
 }
-#[derive(Default)]
-struct MyPacketRouter {
-    _source_node_id: NodeId,
-}
-
-impl MyPacketRouter {
-    fn new(node_id: u32) -> Self {
-        MyPacketRouter {
-            _source_node_id: node_id.into(),
-        }
-    }
-}
-
-#[derive(Debug)]
-struct RouterError {}
-impl std::fmt::Display for RouterError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "RouterError")
-    }
-}
-impl std::error::Error for RouterError {}
-
-impl PacketRouter<(), RouterError> for MyPacketRouter {
-    fn handle_packet_from_radio(
-        &mut self,
-        _packet: FromRadio,
-    ) -> std::result::Result<(), RouterError> {
-        println!("handle_palcket_from_radio called but not sure what to do");
-        Ok(())
-    }
-
-    fn handle_mesh_packet(&mut self, _packet: MeshPacket) -> std::result::Result<(), RouterError> {
-        println!("handle_mesh_packet called but not sure what to do here");
-        Ok(())
-    }
-
-    fn source_node_id(&self) -> NodeId {
-        self._source_node_id
-    }
-}
 
 async fn send_to_meshtastic(stream_api: &mut ConnectedStreamApi, text: &str) -> Result<()> {
     // Create a text message data payload
@@ -169,11 +130,34 @@ async fn send_to_meshtastic(stream_api: &mut ConnectedStreamApi, text: &str) -> 
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    dotenvy::dotenv().ok();
+
+    let telegram_bot_token =
+        std::env::var("TELEGRAM_BOT_TOKEN").expect("TELEGRAM_BOT_TOKEN not set in .env");
+    let telegram_bot_chatid = std::env::var("TELEGRAM_BOT_CHATID")
+        .expect("TELEGRAM_BOT_CHATID not set in .env")
+        .parse()
+        .expect("UNABLE TO PARSE TELEGRAM_BOTID");
+    let ble_device = std::env::var("BLE_DEVICE");
+
+    // let (chat_id,secret) = token.split_once(':').unwrap();
+    let bot = Bot::new(telegram_bot_token);
+    //     teloxide::repl(bot, |bot: Bot, msg: teloxide::prelude::Message| async move {
+    //        println!("Chat ID: {}", msg.chat.id);
+    //        bot.send_message(msg.chat.id, "Got your message ✅").await?;
+    //        Ok(())
+    //   })
+    //   .await;
+    let chat_id = ChatId(telegram_bot_chatid);
+    bot.send_message(chat_id, "Started").await?;
+
     let stream_api = StreamApi::new();
     let mut storage = Storage::load(Path::new(STORAGE_FILE))?;
     storage.print_stats();
 
     let ble_device = if let Some(ble_device) = std::env::args().nth(1) {
+        ble_device
+    } else if let Ok(ble_device) = ble_device {
         ble_device
     } else {
         println!("Scanning BLE devices...");
@@ -190,6 +174,7 @@ async fn main() -> Result<()> {
 
     // You can also use `BleId::from_mac_address(..)` instead of `BleId::from_name(..)` to
     // search for a MAC address.
+    println!("Opening BLE stream...");
     let ble_stream =
         utils::stream::build_ble_stream(&BleId::from_name(&ble_device), Duration::from_secs(5))
             .await?;
@@ -197,7 +182,8 @@ async fn main() -> Result<()> {
 
     let config_id = utils::generate_rand_id();
     let mut stream_api = stream_api.configure(config_id).await?;
-    send_to_meshtastic(&mut stream_api, "Meshtastic BBS test").await?;
+
+    //    send_to_meshtastic(&mut stream_api, "Meshtastic BBS test").await?;
 
     let mut last_print = std::time::Instant::now();
 
@@ -215,7 +201,7 @@ async fn main() -> Result<()> {
                 }
             }
             from_radio::PayloadVariant::Packet(mesh_packet) => {
-                let info = if let Some(ref pv) = mesh_packet.payload_variant {
+                let (bot_msg, info) = if let Some(ref pv) = mesh_packet.payload_variant {
                     match pv {
                         mesh_packet::PayloadVariant::Decoded(decoded) => {
                             let port_num =
@@ -224,42 +210,54 @@ async fn main() -> Result<()> {
                                 PortNum::TextMessageApp => {
                                     let msg = String::from_utf8(decoded.payload.clone())
                                         .unwrap_or("Non-utf8 msg".into());
-                                    format!("TextMessageApp: {}", msg)
+                                    (Some(msg.clone()), format!("TextMessageApp: {}", msg))
                                 }
                                 PortNum::NodeinfoApp => {
                                     if let Ok(user) = User::decode(decoded.payload.as_slice()) {
                                         storage.users.insert(mesh_packet.from, user.clone());
-                                        format!("NodeinfoApp: {}", user.long_name)
+                                        (None, format!("NodeinfoApp: {}", user.long_name))
                                     } else {
                                         eprintln!("{:?}", mesh_packet);
-                                        format!("NodeInfoDecodeErr")
+                                        (None, format!("NodeInfoDecodeErr"))
                                     }
                                 }
-                                _ => format!("{}", port_num.as_str_name()),
+                                _ => (None, format!("{}", port_num.as_str_name())),
                             }
                         }
 
-                        mesh_packet::PayloadVariant::Encrypted(_) => format!("Encrypted"),
+                        mesh_packet::PayloadVariant::Encrypted(_) => (None, format!("Encrypted")),
                     }
                 } else {
-                    format!("")
+                    (None, format!(""))
                 };
 
                 storage.insert_stat(&mesh_packet, &info);
 
-                println!(
-                    "network> {} -> {} snr:{} hop:{}({}) {}",
-                    storage.long_name_of(mesh_packet.from),
-                    if mesh_packet.to == 0xffffffff {
-                        format!("Broadcast")
-                    } else {
-                        storage.long_name_of(mesh_packet.to)
-                    },
+                let from = storage.long_name_of(mesh_packet.from);
+                let to = if mesh_packet.to == 0xffffffff {
+                    format!("BROADCAST")
+                } else {
+                    storage.long_name_of(mesh_packet.to)
+                };
+
+                let log = format!(
+                    "{} -> {} snr:{} hop:{}({}) {}",
+                    from,
+                    to,
                     mesh_packet.rx_snr,
                     mesh_packet.hop_limit,
                     mesh_packet.hop_start,
                     info
                 );
+
+                if let Some(bot_msg) = bot_msg {
+                    bot.send_message(chat_id, format!("💬 {}: {}", from, bot_msg))
+                        .await?;
+                } else if log.contains("nidra") || log.contains("Encrypted") {
+                    bot.send_message(chat_id, format!("ℹ️ {}", &log)).await?;
+                }
+
+                println!("network1> {}", log);
 
                 if last_print.elapsed() > std::time::Duration::from_secs(60) {
                     last_print = std::time::Instant::now();

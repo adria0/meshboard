@@ -1,29 +1,32 @@
+use std::borrow::Cow;
+
 use meshtastic::{
     Message,
     protobufs::{Data, FromRadio, MyNodeInfo, PortNum, User, from_radio, mesh_packet},
     types::NodeId,
 };
 
-pub enum RecievedPacket {
-    ConnectionClosed,
-    RoutingApp(Data),
+#[derive(Debug)]
+pub enum IncomingPacket {
+    #[allow(unused)]
     MyInfo(MyNodeInfo),
+    #[allow(unused)]
+    RoutingApp(Data),
     NodeInfo(NodeId, User),
     TextMessage {
         from: NodeId,
         to: NodeId,
         msg: String,
     },
-    Other,
+    #[allow(unused)]
+    Other(Cow<'static, str>),
 }
-impl From<Option<FromRadio>> for RecievedPacket {
-    fn from(from_radio: Option<FromRadio>) -> Self {
-        use RecievedPacket::*;
-        let Some(from_radio) = from_radio else {
-            return ConnectionClosed;
-        };
+
+impl From<FromRadio> for IncomingPacket {
+    fn from(from_radio: FromRadio) -> Self {
+        use IncomingPacket::*;
         let Some(payload) = from_radio.payload_variant else {
-            return Other;
+            return Other(Cow::Borrowed("No payload"));
         };
         match payload {
             from_radio::PayloadVariant::MyInfo(my_node_info) => MyInfo(my_node_info),
@@ -31,15 +34,15 @@ impl From<Option<FromRadio>> for RecievedPacket {
                 if let Some(user) = node_info.user {
                     NodeInfo(NodeId::new(node_info.num), user)
                 } else {
-                    Other
+                    Other(Cow::Borrowed("NodeInfo without user"))
                 }
             }
-            from_radio::PayloadVariant::Packet(recv_packet) => {
-                let Some(pv) = recv_packet.payload_variant else {
-                    return Other;
+            from_radio::PayloadVariant::Packet(mesh_packet) => {
+                let Some(pv) = mesh_packet.payload_variant else {
+                    return Other(Cow::Borrowed("Packet without content"));
                 };
                 let mesh_packet::PayloadVariant::Decoded(data) = pv else {
-                    return Other;
+                    return Other(Cow::Borrowed("Ciphered Mesh Packet"));
                 };
                 match PortNum::try_from(data.portnum) {
                     Ok(PortNum::RoutingApp) => RoutingApp(data),
@@ -47,22 +50,32 @@ impl From<Option<FromRadio>> for RecievedPacket {
                         let msg = String::from_utf8(data.payload.clone())
                             .unwrap_or("Non-utf8 msg".into());
                         TextMessage {
-                            from: NodeId::new(data.source),
-                            to: NodeId::new(data.dest),
+                            from: NodeId::new(mesh_packet.from),
+                            to: NodeId::new(mesh_packet.to),
                             msg,
                         }
                     }
                     Ok(PortNum::NodeinfoApp) => {
                         if let Ok(user) = User::decode(data.payload.as_slice()) {
-                            NodeInfo(NodeId::new(recv_packet.from), user)
+                            NodeInfo(NodeId::new(mesh_packet.from), user)
                         } else {
-                            Other
+                            Other(Cow::Borrowed("NodeInfo without user"))
                         }
                     }
-                    _ => Other,
+                    _ => {
+                        if let Ok(app) = PortNum::try_from(data.portnum) {
+                            Other(Cow::Owned(format!("{:?}", app)))
+                        } else {
+                            Other(Cow::Owned(format!("Unknown portnum {}", data.portnum)))
+                        }
+                    }
                 }
             }
-            _ => Other,
+            _ => {
+                let mut info = format!("{:?}", payload);
+                info.truncate(20);
+                Other(Cow::Owned(info))
+            }
         }
     }
 }

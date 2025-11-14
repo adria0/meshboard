@@ -4,35 +4,31 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs::File;
 use std::io::BufReader;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::{Result, anyhow};
-use chrono::Local;
+use anyhow::Result;
 use clap::{Parser, Subcommand};
-use meshtastic::Message;
-use meshtastic::api::StreamApi;
-use meshtastic::protobufs::mesh_packet;
-use meshtastic::protobufs::{Data, User};
-use meshtastic::protobufs::{FromRadio, PortNum};
-use meshtastic::protobufs::{MeshPacket, from_radio};
-use meshtastic::utils::stream::BleId;
+use meshtastic::protobufs::MeshPacket;
 
-const STORAGE_FILE: &str = "storage.json";
-
+mod service;
 mod storage;
 mod telegram;
-//mod utils;
+mod utils;
 
 use serde_cbor::Deserializer;
 use storage::Storage;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 
+use crate::service::Service;
 use crate::telegram::TelegramBot;
+
+include!(concat!(env!("OUT_DIR"), "/build_info.rs"));
 
 #[derive(Parser)]
 #[command(name = "mbbs")]
+#[command(version = VERSION)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -93,6 +89,8 @@ async fn discover() -> Result<()> {
 }
 
 async fn start() -> Result<()> {
+    println!("VERSION {}", VERSION);
+
     let telegram_bot_token = std::env::var("TELEGRAM_BOT_TOKEN")?;
     let telegram_bot_chatid = std::env::var("TELEGRAM_BOT_CHATID")?.parse()?;
     let ble_device = std::env::var("BLE_DEVICE")?;
@@ -106,7 +104,7 @@ async fn start() -> Result<()> {
 
     log::info!("Connecting to telegram...");
     let mut bot = TelegramBot::new(telegram_bot_token, telegram_bot_chatid);
-    let mut storage = Storage::load(Path::new(STORAGE_FILE))?;
+    let mut storage = Storage::default();
 
     loop {
         let mut service = Service::new(cancel.clone(), &mut bot, &mut storage, ble_device.clone());
@@ -122,139 +120,4 @@ async fn start() -> Result<()> {
         };
     }
     Ok(())
-}
-
-struct Service<'a> {
-    cancel: CancellationToken,
-    bot: &'a mut TelegramBot,
-    storage: &'a mut Storage,
-    ble_device: String,
-}
-
-impl<'a> Service<'a> {
-    pub fn new(
-        cancel: CancellationToken,
-        bot: &'a mut TelegramBot,
-        storage: &'a mut Storage,
-        ble_device: String,
-    ) -> Self {
-        Self {
-            cancel,
-            bot,
-            storage,
-            ble_device,
-        }
-    }
-
-    pub async fn run(&mut self) -> Result<()> {
-        log::info!("Opening BLE to meshtastic device {}...", &self.ble_device);
-        let _ = self
-            .bot
-            .send_message(format!("Start get events from {}", &self.ble_device))
-            .await;
-
-        let ble_stream = meshtastic::utils::stream::build_ble_stream(
-            &BleId::from_name(&self.ble_device),
-            Duration::from_secs(5),
-        )
-        .await?;
-
-        let stream_api = StreamApi::new();
-        let (mut decoded_listener, stream_api) = stream_api.connect(ble_stream).await;
-
-        let config_id = meshtastic::utils::generate_rand_id();
-        let stream_api = stream_api.configure(config_id).await?;
-
-        let mut err = None;
-
-        let mut idle_counter = 0;
-        while err.is_none() {
-            select! {
-                _ = self.cancel.cancelled() => break,
-                Some(from_radio) = decoded_listener.recv() => {
-                    log::info!("Got message.");
-                    idle_counter=0;
-                    if let Err(process_err) = self.process(from_radio).await {
-                        err = Some(process_err);
-                    }
-                }
-                _ = tokio::time::sleep(Duration::from_secs(10)) => {
-                    idle_counter += 10;
-                    log::info!("Nothing happened in {}s, but still alive", idle_counter);
-                    if idle_counter >= 300{
-                        log::warn!("Idle for more than 300s, I'm going to reset");
-                        err = Some(anyhow!("Idle for more than 300s, I'm going to reset"));
-                    }
-                }
-            }
-        }
-
-        let _ = stream_api.disconnect().await?;
-
-        if let Some(err) = err {
-            Err(err)
-        } else {
-            Ok(())
-        }
-    }
-
-    pub async fn process(&mut self, from_radio: FromRadio) -> Result<()> {
-        let Some(payload_variant) = from_radio.payload_variant else {
-            return Ok(());
-        };
-
-        match payload_variant {
-            // This message is recieved from the storage of the node
-            from_radio::PayloadVariant::NodeInfo(node_info) => {
-                if let Some(user) = node_info.user {
-                    self.storage.users.insert(node_info.num, user);
-                }
-            }
-            // This message is recieved from the mesh
-            from_radio::PayloadVariant::Packet(mesh_packet) => {
-                if let Some(ref pv) = mesh_packet.payload_variant {
-                    match pv {
-                        mesh_packet::PayloadVariant::Decoded(data) => {
-                            self.process_data(&mesh_packet, data).await?;
-                        }
-                        mesh_packet::PayloadVariant::Encrypted(_) => {}
-                    }
-                }
-            }
-            _ => {}
-        }
-
-        Ok(())
-    }
-
-    pub async fn process_data(&mut self, mesh_packet: &MeshPacket, data: &Data) -> Result<()> {
-        let date = Local::now().format("%Y-%m-%d").to_string();
-        let filename = format!("network.{}.cbor", date);
-        let file = File::options().create(true).append(true).open(&filename)?;
-        serde_cbor::to_writer(&file, &mesh_packet)?;
-
-        let port_num = PortNum::try_from(data.portnum).unwrap_or(PortNum::UnknownApp);
-        let from = self.storage.long_name_of(mesh_packet.from);
-        let to = if mesh_packet.to == 0xffffffff {
-            format!("BROADCAST")
-        } else {
-            self.storage.long_name_of(mesh_packet.to)
-        };
-
-        match port_num {
-            PortNum::TextMessageApp => {
-                let msg = String::from_utf8(data.payload.clone()).unwrap_or("Non-utf8 msg".into());
-                self.bot
-                    .send_message(format!("💬 {} : {} ({})", from, msg, to))
-                    .await?;
-            }
-            PortNum::NodeinfoApp => {
-                if let Ok(user) = User::decode(data.payload.as_slice()) {
-                    self.storage.users.insert(mesh_packet.from, user.clone());
-                }
-            }
-            _ => {}
-        };
-        Ok(())
-    }
 }

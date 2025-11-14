@@ -6,6 +6,7 @@ pub struct TelegramBot {
     bot: Bot,
     chatid: ChatId,
     pending: VecDeque<(String, Instant)>,
+    last_sent_message: Instant,
 }
 
 impl TelegramBot {
@@ -14,9 +15,14 @@ impl TelegramBot {
             bot: Bot::new(&token),
             chatid: ChatId(chatid),
             pending: VecDeque::new(),
+            last_sent_message: Instant::now(),
         }
     }
+    pub fn last_sent_message_secs(&self) -> u64 {
+        self.last_sent_message.elapsed().as_secs()
+    }
     pub async fn send_message<S: Into<String>>(&mut self, message: S) -> Result<()> {
+        self.last_sent_message = Instant::now();
         self.pending.push_back((message.into(), Instant::now()));
         self.send_pending_messages().await
     }
@@ -32,7 +38,7 @@ impl TelegramBot {
                 .send_message(self.chatid, format!("{}{}", text, suffix))
                 .await
             {
-                eprint!("{}", e);
+                log::error!("{}", e);
                 self.pending.push_front((text, ts));
             }
         }

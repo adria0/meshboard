@@ -11,6 +11,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use meshtastic::protobufs::MeshPacket;
 
+mod mesh;
 mod service;
 mod storage;
 mod telegram;
@@ -36,6 +37,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Cli
+    Cli,
     /// Start the network node
     Start,
     /// Discover peers
@@ -57,6 +60,7 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
+        Commands::Cli => mesh::mesh_example().await?,
         Commands::Start => start().await?,
         Commands::Discover => discover().await?,
         Commands::Dump { file } => dump(file).await?,
@@ -96,10 +100,10 @@ async fn start() -> Result<()> {
     let ble_device = std::env::var("BLE_DEVICE")?;
 
     let cancel = CancellationToken::new();
-    let cancel_clone = cancel.clone();
+    let cancel_ctrl_c = cancel.clone();
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.ok();
-        cancel_clone.cancel();
+        cancel_ctrl_c.cancel();
     });
 
     log::info!("Connecting to telegram...");

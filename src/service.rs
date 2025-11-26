@@ -1,7 +1,7 @@
 use std::{fs::File, time::Duration};
 
 use crate::{storage::Storage, telegram::TelegramBot, utils::IncomingPacket};
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 use chrono::Local;
 use meshtastic::{
     api::StreamApi,
@@ -56,24 +56,26 @@ impl<'a> Service<'a> {
         let mut idle_counter = 0;
         let mut stats_recv_count = 0;
 
-        while err.is_none() {
+        loop {
             if self.bot.last_sent_message_secs() > 3600 {
-                self.bot
+                let _ = self
+                    .bot
                     .send_message(format!("Alive, recv_count: {}", stats_recv_count))
-                    .await?;
+                    .await;
             }
             select! {
                 _ = self.cancel.cancelled() => break,
                 from_radio = radio_rx.recv() => {
                     if from_radio.is_none() {
-                        bail!("radio_rx stream finished");
+                        err = Some(anyhow!("radio_rx stream finished"));
+                        break;
                     }
                     let from_radio = from_radio.unwrap();
                     idle_counter=0;
                     stats_recv_count += 1;
 
                     if let Err(process_err) = self.process(from_radio).await {
-                        err = Some(process_err);
+                        log::warn!("Error processing from radio {}", process_err);
                     }
                 }
                 _ = tokio::time::sleep(Duration::from_secs(30)) => {
@@ -82,12 +84,13 @@ impl<'a> Service<'a> {
                     if idle_counter >= 300{
                         log::warn!("Idle for more than 300s, I'm going to reset");
                         err = Some(anyhow!("Idle for more than 300s, I'm going to reset"));
+                        break;
                     }
                 }
             }
         }
 
-        let _ = stream_api.disconnect().await?;
+        let _ = stream_api.disconnect().await;
 
         if let Some(err) = err {
             Err(err)

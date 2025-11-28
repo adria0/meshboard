@@ -1,5 +1,4 @@
 //! This example connects via Bluetooth LE to the radio and prints out all received packets.
-
 #[allow(unused)]
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs::File;
@@ -37,8 +36,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Cli
-    Cli,
+    /// Discover BLE nodes
+    Repl,
     /// Start the network node
     Start,
     /// Discover peers
@@ -60,7 +59,7 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::Cli => mesh::mesh_example().await?,
+        Commands::Repl => mesh::repl().await?,
         Commands::Start => start().await?,
         Commands::Discover => discover().await?,
         Commands::Dump { file } => dump(file).await?,

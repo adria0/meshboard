@@ -5,6 +5,7 @@ use tokio::{
     sync::{
         RwLock,
         mpsc::{UnboundedReceiver, UnboundedSender},
+        oneshot,
     },
 };
 use tokio_util::sync::CancellationToken;
@@ -28,40 +29,45 @@ use meshtastic::{
 use super::router::*;
 pub use super::types::*;
 
-use TextMessageStatus::*;
-
+#[macro_export]
 macro_rules! r {
     ($slf:ident . $field:ident) => {
         $slf.state.read().await.$field
     };
 }
+#[macro_export]
 macro_rules! w {
     ($slf:ident . $field:ident) => {
         $slf.state.write().await.$field
     };
 }
 
-#[derive(Debug, Clone)]
+use TextMessageStatus::*;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
-    PacketCount(usize),
+    Heartbeat(usize),
+    Ready,
     NewMessage(u32),
     UpdatedMessage(u32),
 }
 
 #[derive(Default)]
 pub struct HandlerState {
-    my_node_info: Option<MyNodeInfo>,
-    nodes: HashMap<u32, User>,
-    messages: HashMap<u32, TextMessage>,
+    pub my_node_info: Option<MyNodeInfo>,
+    pub nodes: HashMap<u32, User>,
+    pub messages: HashMap<u32, TextMessage>,
 }
 
 pub type State = Arc<RwLock<HandlerState>>;
 
 pub struct Handler {
     pub state: State,
-    pub cancel: CancellationToken,
     pub msg_tx: UnboundedSender<TextMessage>,
     pub status_rx: UnboundedReceiver<Status>,
+
+    pub cancel: CancellationToken,
+    finished_rx: tokio::sync::oneshot::Receiver<()>,
 }
 
 pub struct Service {
@@ -71,43 +77,50 @@ pub struct Service {
     stream_api: ConnectedStreamApi<Configured>,
     msg_rx: UnboundedReceiver<TextMessage>,
     status_tx: UnboundedSender<Status>,
+    finished_tx: tokio::sync::oneshot::Sender<()>,
+    config_complete: bool,
 }
 
-impl Handler {
-    pub async fn long_name_of(&self, user_id: u32) -> Option<String> {
-        self.state
-            .read()
-            .await
-            .nodes
-            .get(&user_id)
-            .map(|user| user.long_name.clone())
+impl HandlerState {
+    pub fn get_long_name_by_node_id(&self, user_id: u32) -> Option<String> {
+        self.nodes.get(&user_id).map(|user| user.long_name.clone())
+    }
+    pub fn get_short_name_by_node_id(&self, user_id: u32) -> Option<String> {
+        self.nodes.get(&user_id).map(|user| user.long_name.clone())
+    }
+    pub fn get_node_id_by_short_name(&self, short_name: &str) -> Option<u32> {
+        for (id, user) in &self.nodes {
+            if user.short_name == short_name {
+                return Some(*id);
+            }
+        }
+        None
     }
 
-    pub async fn format_msg(&self, msg: &TextMessage) -> String {
-        let me = r!(self.my_node_info).as_ref().unwrap().my_node_num;
-        let name = async |id| {
-            self.long_name_of(id)
-                .await
+    pub fn format_msg(&self, msg: &TextMessage) -> String {
+        let me = self.my_node_info.as_ref().unwrap().my_node_num;
+        let name = |id| {
+            self.get_long_name_by_node_id(id)
                 .unwrap_or(format!("NodeId({})", id))
         };
 
         let status = match msg.status {
             Sent => "📤".into(),
-            Recieved => "📥".into(),
+            Recieved => "".into(),
             ImplicitAck => "✔️".into(),
             ExplicitAck => "✔️✔️".into(),
             RoutingError(error) => format!("❌ {:?}", error),
         };
 
         if msg.to == 0xffffffff {
-            format!("💬 {} : {} {} ", name(msg.from).await, msg.text, status)
+            format!("💬 {} : {} {} ", name(msg.from), msg.text, status)
         } else if msg.to == me {
-            format!("👤 {} : {} {}", name(msg.from).await, msg.text, status)
+            format!("👤 {} : {} {}", name(msg.from), msg.text, status)
         } else {
             format!(
                 "📩 {} → {} : {} {}",
-                name(msg.from).await,
-                name(msg.to).await,
+                name(msg.from),
+                name(msg.to),
                 msg.text,
                 status
             )
@@ -115,13 +128,20 @@ impl Handler {
     }
 
     pub async fn msg(&self, id: u32) -> Option<TextMessage> {
-        self.state.read().await.messages.get(&id).cloned()
+        self.messages.get(&id).cloned()
     }
 
-    pub async fn me(&self) -> u32 {
-        r!(self.my_node_info).as_ref().unwrap().my_node_num
+    pub async fn my_node_num(&self) -> u32 {
+        self.my_node_info.as_ref().unwrap().my_node_num
     }
+    pub async fn my_short_name(&self) -> Option<String> {
+        self.my_node_info
+            .as_ref()
+            .and_then(|n| self.get_short_name_by_node_id(n.my_node_num))
+    }
+}
 
+impl Handler {
     pub async fn send_text<T: Into<String>, D: Into<Destination>>(
         &self,
         text: T,
@@ -148,17 +168,27 @@ impl Handler {
         self.msg_tx.send(TextMessage::sent(from, to, text.into()))?;
         Ok(())
     }
+    pub async fn finish(mut self) {
+        self.cancel.cancel();
+        loop {
+            tokio::select! {
+                _ = &mut self.finished_rx => {
+                    break;
+                }
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+            }
+        }
+    }
 }
 
 impl Service {
-    pub async fn from_ble(ble_device: &str) -> Result<(Handler, Service)> {
+    pub async fn from_ble(ble_device: &str) -> Result<Handler> {
         let ble_stream =
             build_ble_stream(&BleId::from_name(&ble_device), Duration::from_secs(5)).await?;
-        let (handler, service) = Self::build(ble_stream).await?;
-        Ok((handler, service))
+        Self::build(ble_stream).await
     }
 
-    async fn build<S>(stream_handle: StreamHandle<S>) -> Result<(Handler, Service)>
+    async fn build<S>(stream_handle: StreamHandle<S>) -> Result<Handler>
     where
         S: AsyncReadExt + AsyncWriteExt + Send + 'static,
     {
@@ -171,6 +201,8 @@ impl Service {
         let (status_tx, status_rx) = tokio::sync::mpsc::unbounded_channel::<Status>();
         let (msg_tx, msg_rx) = tokio::sync::mpsc::unbounded_channel::<TextMessage>();
 
+        let (finished_tx, finished_rx) = oneshot::channel::<()>();
+
         let state = Arc::new(RwLock::new(HandlerState::default()));
 
         let cancel = CancellationToken::new();
@@ -180,6 +212,7 @@ impl Service {
             cancel: cancel.clone(),
             msg_tx,
             status_rx,
+            finished_rx,
         };
 
         let service = Service {
@@ -189,14 +222,19 @@ impl Service {
             stream_api,
             msg_rx,
             status_tx,
+            finished_tx,
+            config_complete: false,
         };
 
-        Ok((handler, service))
+        tokio::spawn(service.start());
+
+        Ok(handler)
     }
     pub async fn start(mut self) -> Result<()> {
         let mut buffer_flushed = false;
-        self.status_tx.send(Status::PacketCount(0))?;
+        self.status_tx.send(Status::Heartbeat(0))?;
         let mut packet_count = 0;
+        let mut hearthbeat_interval = 1000;
         loop {
             tokio::select! {
                 from_radio = self.packet_rx.recv() => {
@@ -218,17 +256,23 @@ impl Service {
                     };
                     self.process_send_text(msg).await?;
                 }
-                _ = tokio::time::sleep(Duration::from_millis(1000)) => {
-                    if !buffer_flushed {
+                _ = tokio::time::sleep(Duration::from_millis(hearthbeat_interval)) => {
+                    if !buffer_flushed && self.config_complete {
                         buffer_flushed = true;
+                        hearthbeat_interval = 10_000;
+                        self.status_tx.send(Status::Ready)?;
+                    } else {
+                        self.status_tx.send(Status::Heartbeat(packet_count))?;
                     }
-                    self.status_tx.send(Status::PacketCount(packet_count))?;
                 }
                 _ = self.cancel.cancelled() => {
                     break;
                 }
             }
         }
+        self.packet_rx.close();
+        self.stream_api.disconnect().await?;
+        self.finished_tx.send(()).unwrap();
         Ok(())
     }
 
@@ -251,7 +295,7 @@ impl Service {
         Ok(())
     }
 
-    async fn process_from_radio(&self, from_radio: FromRadio) -> Result<()> {
+    async fn process_from_radio(&mut self, from_radio: FromRadio) -> Result<()> {
         let Some(payload) = from_radio.payload_variant else {
             bail!("No payload");
         };
@@ -263,6 +307,9 @@ impl Service {
             // Local for the data in NodeDB
             from_radio::PayloadVariant::NodeInfo(node_info) if node_info.user.is_some() => {
                 w!(self.nodes).insert(node_info.num, node_info.user.unwrap());
+            }
+            from_radio::PayloadVariant::ConfigCompleteId(_) => {
+                self.config_complete = true;
             }
             // Mesh packet loaded
             from_radio::PayloadVariant::Packet(mesh_packet) => {

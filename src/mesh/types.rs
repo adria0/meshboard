@@ -1,4 +1,5 @@
-use std::{fmt::Display, time::Instant};
+#[allow(dead_code)]
+use std::time::Instant;
 
 use meshtastic::protobufs::routing;
 

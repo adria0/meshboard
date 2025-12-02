@@ -7,12 +7,15 @@ chrono = "0.4"
 
 [dependencies]
 anyhow = "1.0.100"
+async-trait = "0.1.89"
 chrono = "0.4.42"
 clap = { version = "4.5.51", features = ["derive"] }
 dotenvy = "0.15.7"
 env_logger = "0.11.8"
+futures = "0.3.31"
 log = "0.4.28"
 meshtastic = { git = "https://github.com/meshtastic/rust.git", features = ["tokio", "bluetooth-le"] }
+mini-moka = "0.10.3"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_cbor = "0.11.2"
 serde_json = "1.0.145"

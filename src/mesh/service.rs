@@ -1,6 +1,10 @@
 use anyhow::{Result, anyhow, bail};
 use log::error;
-use std::{collections::HashMap, future::pending, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+    time::Duration,
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     sync::{
@@ -259,7 +263,8 @@ impl Service {
     pub async fn start(mut self) -> Result<()> {
         let mut buffer_flushed = false;
         let mut packet_count = 0;
-        let mut hearthbeat_interval = 1000;
+        let mut hearthbeat_counter = 0;
+        let mut msg_queue = VecDeque::new();
         let mut ret = Ok(());
 
         check!(self.status_tx.send(Status::Heartbeat(0)));
@@ -277,26 +282,25 @@ impl Service {
                         error!("Error processing packet: {:?} : {}", from_radio, error);
                     }
                 }
-                msg = async {
-                    if buffer_flushed {
-                        self.msg_rx.recv().await
-                    } else {
-                        pending().await
-                    }
-                } => {
+                msg = self.msg_rx.recv() => {
                     let Some(msg) = msg else {
                         ret = Err(anyhow!("Text message stream closed"));
                         break;
                     };
-                    check!(self.process_send_text(msg.clone()).await);
+                    msg_queue.push_back(msg);
                 }
-                _ = tokio::time::sleep(Duration::from_millis(hearthbeat_interval)) => {
+                _ = tokio::time::sleep(Duration::from_millis(1000)) => {
+                    hearthbeat_counter += 1;
+
                     if !buffer_flushed && self.config_complete {
                         buffer_flushed = true;
-                        hearthbeat_interval = 10_000;
                         check!(self.status_tx.send(Status::Ready));
-                    } else {
+                    }
+                    if hearthbeat_counter % 10 == 0 {
                         check!(self.status_tx.send(Status::Heartbeat(packet_count)));
+                    }
+                    if let Some(msg) = msg_queue.pop_front() {
+                        check!(self.process_send_text(msg.clone()).await);
                     }
                 }
                 _ = self.cancel.cancelled() => {

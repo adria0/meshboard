@@ -10,6 +10,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use meshtastic::protobufs::MeshPacket;
 
+mod bbs;
 mod mesh;
 mod repl;
 mod service;
@@ -34,6 +35,12 @@ struct Cli {
     #[command(subcommand)]
     command: Commands,
 }
+
+/* What is does?
+ *
+ *
+ *
+ */
 
 #[derive(Subcommand)]
 enum Commands {

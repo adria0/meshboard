@@ -19,6 +19,7 @@ pub struct TextMessage {
     pub to: u32,
     pub text: String,
     pub status: TextMessageStatus,
+    pub pk_hash: [u8; 32],
 }
 
 impl TextMessage {
@@ -28,15 +29,17 @@ impl TextMessage {
             from,
             to,
             text,
+            pk_hash: [0; 32],
             status: TextMessageStatus::Sent,
         }
     }
-    pub fn recieved(from: u32, to: u32, text: String) -> Self {
+    pub fn recieved(from: u32, to: u32, text: String, pk_hash: [u8; 32]) -> Self {
         Self {
             ts: Instant::now(),
             from,
             to,
             text,
+            pk_hash,
             status: TextMessageStatus::Recieved,
         }
     }

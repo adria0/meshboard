@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow, bail};
 use log::error;
+use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
@@ -157,7 +158,6 @@ impl Handler {
         loop {
             tokio::select! {
                 status = self.status_rx.recv() => {
-                    println!("self.status_rx.recv()");
                     let Some(status) = status else { bail!("Channel closed"); };
                     if status == Status::Ready {
                         break;
@@ -265,36 +265,31 @@ impl Service {
         let mut buffer_flushed = false;
         let mut packet_count = 0;
         let mut hearthbeat_counter = 0;
-        // let mut msg_queue = VecDeque::new();
+        let mut send_msg_queue = VecDeque::new();
         let mut ret = Ok(());
 
         check!(self.status_tx.send(Status::Heartbeat(0)));
         loop {
             tokio::select! {
                 from_radio = self.packet_rx.recv() => {
-                    println!("self.packet_rx.recv()");
-
                     packet_count += 1;
                     let Some(from_radio) = from_radio else {
                         ret = Err(anyhow!("BLE stream closed"));
                         break;
                     };
-                    println!("Received packet: {:?}", from_radio);
                     check!(self.status_tx.send(Status::FromRadio(from_radio.clone())));
 
                     if let Err(error) = self.process_from_radio(from_radio.clone()).await {
                         error!("Error processing packet: {:?} : {}", from_radio, error);
                     }
                 }
-                /*
                 msg = self.msg_rx.recv() => {
                     let Some(msg) = msg else {
                         ret = Err(anyhow!("Text message stream closed"));
                         break;
                     };
-                    msg_queue.push_back(msg);
+                    send_msg_queue.push_back(msg);
                 }
-                */
                 _ = tokio::time::sleep(Duration::from_millis(500)) => {
                     hearthbeat_counter += 1;
 
@@ -307,9 +302,9 @@ impl Service {
 
                     // Each second
                     if hearthbeat_counter % 2 == 0 {
-                        //if let Some(msg) = msg_queue.pop_front() {
-                        //    check!(self.process_send_text(msg.clone()).await);
-                        //}
+                        if let Some(msg) = send_msg_queue.pop_front() {
+                            check!(self.process_send_text(msg.clone()).await);
+                        }
                     }
 
                     // Each 10 second
@@ -396,9 +391,13 @@ impl Service {
 
     async fn handle_textmessage(&self, mesh_packet: &MeshPacket, data: &Data) -> Result<()> {
         let msg = String::from_utf8(data.payload.clone())?;
+        let pk_hash: [u8; 32] = Sha256::digest(&mesh_packet.public_key)
+            .to_vec()
+            .try_into()
+            .unwrap();
         w!(self.messages).insert(
             mesh_packet.id,
-            TextMessage::recieved(mesh_packet.from, mesh_packet.to, msg),
+            TextMessage::recieved(mesh_packet.from, mesh_packet.to, msg, pk_hash),
         );
         self.status_tx.send(Status::NewMessage(mesh_packet.id))?;
 

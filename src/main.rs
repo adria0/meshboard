@@ -3,10 +3,10 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs::File;
 use std::io::BufReader;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
 use meshtastic::api::StreamApi;
 use meshtastic::protobufs::MeshPacket;
@@ -26,6 +26,7 @@ use storage::Storage;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 
+use crate::mesh::service::Destination;
 use crate::service::Service;
 use crate::telegram::TelegramBot;
 
@@ -47,6 +48,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// BBS REPL
+    BBSRepl,
+    /// BBS Service
+    BBS,
     /// Fast check
     FastCheck,
     /// Discover BLE nodes
@@ -72,8 +77,10 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
+        Commands::BBS => bbs().await?,
         Commands::FastCheck => fast_check().await?,
         Commands::Repl => repl::repl().await?,
+        Commands::BBSRepl => bbs::repl::run_repl().await?,
         Commands::Start => start().await?,
         Commands::Discover => discover().await?,
         Commands::Dump { file } => dump(file).await?,
@@ -132,6 +139,55 @@ async fn discover() -> Result<()> {
             device.mac_address
         );
     }
+    Ok(())
+}
+
+async fn bbs() -> Result<()> {
+    let storage = bbs::storage::Storage::open(Path::new("./db"))?;
+    let mut bbs = bbs::service::BBS::new(storage);
+    bbs.init().await?;
+
+    let ble_device = std::env::var("BLE_DEVICE")?;
+    let mut handler = mesh::service::Service::from_ble(&ble_device).await?;
+    println!("Using device: {}, booting..", ble_device);
+    if let Err(err) = handler.wait_for_boot_ready(30).await {
+        println!("Error: {}", err);
+    }
+    loop {
+        tokio::select! {
+            status = handler.status_rx.recv() => {
+                use mesh::service::Status;
+                let Some(status) = status else { bail!("Channel closed"); };
+                match status {
+                    Status::Ready => {
+                        println!("Ready");
+                    },
+                    Status::NewMessage(id) => {
+                        let state = handler.state.read().await;
+                        let msg = state.messages.get(&id).unwrap();
+                        if msg.to != state.my_node_num().await {
+                            continue;
+                        }
+                        let short_name = state.get_short_name_by_node_id(msg.from).unwrap_or("?".to_string());
+                        let pk_hash = msg.pk_hash;
+                        let response_msgs = bbs.handle(pk_hash,&short_name, &msg.text).await?;
+                        for response_msg in response_msgs {
+                            handler.send_text(response_msg, Destination::Node(msg.from)).await?;
+                        }
+                    },
+                    Status::UpdatedMessage(_msg) => {
+                    },
+                    Status::Heartbeat(_packet_count) => {
+                        println!("Heartbeat.");
+                    },
+                    Status::FromRadio(_from_radio) => {
+                    },
+                }
+            }
+            _ = handler.cancel.cancelled() => break,
+        }
+    }
+
     Ok(())
 }
 

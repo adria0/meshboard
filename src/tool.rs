@@ -34,8 +34,8 @@ pub async fn ble_device_auto() -> Result<String> {
     }
 }
 
-pub async fn run_repl() -> Result<()> {
-    println!("Starting REPL. Type 'help' for commands.");
+pub async fn run_tool() -> Result<()> {
+    println!("Starting Tool. Type 'help' for commands.");
     let mut handler: Option<Handler> = None;
     loop {
         if let Some(handler) = &handler

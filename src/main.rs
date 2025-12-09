@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 
 mod bbs;
 mod mesh;
-mod repl;
+mod tool;
 
 include!(concat!(env!("OUT_DIR"), "/build_info.rs"));
 
@@ -24,7 +24,7 @@ enum Commands {
     /// Start BBS Service
     Start,
     /// Run REPL utility
-    Repl,
+    Tool,
 }
 
 #[tokio::main]
@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Start => bbs::run_bbs().await?,
-        Commands::Repl => repl::run_repl().await?,
+        Commands::Tool => tool::run_tool().await?,
     }
 
     Ok(())

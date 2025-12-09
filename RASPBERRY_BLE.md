@@ -1,7 +1,7 @@
 # Bluetooth setup
 sudo apt install bluez*
-sudo systemctl enable bluetooth
 sudo apt install rfkill --fix-broken
+sudo systemctl enable bluetooth
 sudo rfkill list
 sudo hciconfig -a
 sudo rfkill unblock bluetooth

@@ -34,7 +34,7 @@ pub async fn ble_device_auto() -> Result<String> {
     }
 }
 
-pub async fn repl() -> Result<()> {
+pub async fn run_repl() -> Result<()> {
     println!("Starting REPL. Type 'help' for commands.");
     let mut handler: Option<Handler> = None;
     loop {
@@ -49,10 +49,11 @@ pub async fn repl() -> Result<()> {
         std::io::stdin().read_line(&mut command)?; // reads until '\n'
         let line: Vec<&str> = command.trim().split(" ").collect(); // remove trailing newline
         match line[0] {
-            "exit" | "quit" => break,
+            "exit" => break,
             "ble" => {
                 if line.len() < 2 {
                     println!("Usage: ble <device_name|auto>");
+                    println!("Available devices:");
                     dump_ble_devices().await?;
                     continue;
                 }
@@ -121,7 +122,9 @@ pub async fn repl() -> Result<()> {
                     println!("{:?}", nodes);
                 }
             }
-
+            "help" => {
+                println!("Available commands: ble, nodes, listen, send, exit");
+            }
             _ => {
                 println!("Unknown command: {}", command);
             }

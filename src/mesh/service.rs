@@ -296,7 +296,6 @@ impl Service {
                     // Each 500 ms
                     if !buffer_flushed && self.config_complete {
                         buffer_flushed = true;
-                        println!("Buffer flushed");
                         check!(self.status_tx.send(Status::Ready));
                     }
 

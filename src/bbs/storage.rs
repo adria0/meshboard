@@ -26,7 +26,6 @@ fn models() -> &'static Models {
     })
 }
 
-pub type MessageId = u32;
 pub type ChannelId = u32;
 pub type UserId = u32;
 
@@ -82,6 +81,7 @@ pub struct Storage {
 }
 
 impl Storage {
+    #[cfg(test)]
     pub fn memory() -> Self {
         let db = Builder::new().create_in_memory(models()).unwrap();
         Self { db }
@@ -89,9 +89,6 @@ impl Storage {
     pub fn open(path: &Path) -> Result<Self> {
         let db = Builder::new().create(models(), path)?;
         Ok(Self { db })
-    }
-    pub fn new(db: Database<'static>) -> Self {
-        Self { db }
     }
     pub fn add_channel(&self, name: &str) -> Result<u32> {
         let rw = self.db.rw_transaction()?;
@@ -184,8 +181,7 @@ mod test {
 
     #[test]
     fn test_channels() -> anyhow::Result<()> {
-        let db = Builder::new().create_in_memory(models())?;
-        let s = Storage::new(db);
+        let s = Storage::memory();
 
         // Test channels
         let cid0 = s.add_channel("talk")?;
@@ -201,8 +197,7 @@ mod test {
 
     #[test]
     fn test_users() -> anyhow::Result<()> {
-        let db = Builder::new().create_in_memory(models())?;
-        let s = Storage::new(db);
+        let s = Storage::memory();
 
         // Test users
         let mut user0 = User {
@@ -235,8 +230,7 @@ mod test {
 
     #[test]
     fn test_messages() -> anyhow::Result<()> {
-        let db = Builder::new().create_in_memory(models())?;
-        let s = Storage::new(db);
+        let s = Storage::memory();
 
         let mkmsg = |cid, ts| ChannelMessage {
             cid_ts: (cid, ts),

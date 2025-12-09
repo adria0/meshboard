@@ -1,4 +1,3 @@
-use clap::{Parser, Subcommand};
 use mini_moka::sync::Cache;
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -12,40 +11,32 @@ use crate::bbs::storage::UserPkHash;
 
 const HELP: &str = "h(elp) | c(hannels)  | j(oin) ch | p(ost) msg  | l(list)";
 
-/// Subcomandos del BBS, equivalentes a h/c/j/p/l
-#[derive(Debug, Subcommand)]
-pub enum BbsCommand {
-    /// h(elp)
-    #[command(name = "h")]
+pub enum Command {
     Help,
-
-    /// c(hannels)
-    #[command(name = "c")]
     Channels,
-
-    /// j(oin) ch
-    #[command(name = "j")]
-    Join {
-        /// Nombre del canal
-        ch: String,
-    },
-
-    /// p(ost) msg
-    #[command(name = "p")]
-    Post {
-        /// Texto del mensaje
-        msg: String,
-    },
-
-    /// l(ist)
-    #[command(name = "l")]
+    Join { ch: String },
+    Post { msg: String },
     List,
 }
-#[derive(Debug, Parser)]
-#[command(disable_help_flag = true)] // ya tienes tu propio "h"
-pub struct BbsCli {
-    #[command(subcommand)]
-    pub cmd: BbsCommand,
+impl Command {
+    pub fn parse(command: &str) -> Result<Self> {
+        let mut parts = command.split_whitespace();
+        match parts.next() {
+            Some("h") | Some("help") => Ok(Command::Help),
+            Some("c") | Some("channels") => Ok(Command::Channels),
+            Some("j") | Some("join") => Ok(Command::Join {
+                ch: parts
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("Missing channel name"))?
+                    .to_string(),
+            }),
+            Some("p") | Some("post") => Ok(Command::Post {
+                msg: parts.collect::<Vec<_>>().join(" "),
+            }),
+            Some("l") | Some("list") => Ok(Command::List),
+            _ => bail!("Invalid command"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -77,13 +68,6 @@ impl BBS {
             self.storage.add_channel("general")?;
         }
         Ok(())
-    }
-
-    fn parse_command_line(&self, command: &str) -> Result<BbsCommand> {
-        // clap espera un argv, así que inventamos el argv[0]
-        let argv = std::iter::once("bbs").chain(command.split_whitespace());
-        let cli = BbsCli::try_parse_from(argv).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        Ok(cli.cmd)
     }
 
     pub async fn handle(
@@ -121,8 +105,8 @@ impl BBS {
             .unwrap()
             .as_millis() as u64;
 
-        match self.parse_command_line(command) {
-            Ok(BbsCommand::Channels) => {
+        match Command::parse(command) {
+            Ok(Command::Channels) => {
                 let channels = self.storage.get_channels()?;
                 let list = channels
                     .iter()
@@ -131,7 +115,7 @@ impl BBS {
                     .join(",");
                 return Ok(vec![list]);
             }
-            Ok(BbsCommand::Join { ch }) => {
+            Ok(Command::Join { ch }) => {
                 let channels = self.storage.get_channels()?;
                 let Some(channel) = channels.iter().find(|_ch| _ch.name == ch) else {
                     bail!("Channel not found");
@@ -140,7 +124,7 @@ impl BBS {
                 self.sessions.insert(user_pk_hash, session);
                 return Ok(vec!["Ack".into()]);
             }
-            Ok(BbsCommand::Post { msg }) => {
+            Ok(Command::Post { msg }) => {
                 let message = ChannelMessage {
                     cid_ts: (session.current_channel, now),
                     uid: session.user_id,
@@ -152,7 +136,7 @@ impl BBS {
                 return Ok(vec!["Ack".into()]);
             }
 
-            Ok(BbsCommand::List) => {
+            Ok(Command::List) => {
                 let messages =
                     self.storage
                         .get_messages(session.current_channel, user.last_ts, now)?;

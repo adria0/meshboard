@@ -1,7 +1,8 @@
 [package]
-name = "mbbs"
+name = "meshboard"
 version = "0.1.0"
 edition = "2024"
+
 [build-dependencies]
 chrono = "0.4"
 
@@ -12,24 +13,19 @@ repl = []
 [dependencies]
 anyhow = "1.0.100"
 async-trait = "0.1.89"
-bincode = { version = "2.0.1", features = ["serde"] }
 chrono = "0.4.42"
 clap = { version = "4.5.51", features = ["derive"] }
 dotenvy = "0.15.7"
 env_logger = "0.11.8"
 futures = "0.3.31"
 log = "0.4.28"
-meshtastic = { git = "https://github.com/meshtastic/rust.git", rev = "0a3a9dae0e206f95f8a9219d726f6e01ffe641c6", features = ["tokio", "bluetooth-le"] }
+meshtastic = { version="0.1.8", features = ["tokio", "bluetooth-le"] }
 mini-moka = "0.10.3"
-redb = "3.1.0"
-reedline = "0.44.0"
 serde = { version = "1.0.228", features = ["derive"] }
-serde_cbor = "0.11.2"
-serde_json = "1.0.145"
-teloxide = "0.17.0"
 time = { version = "0.3.44", features = ["formatting"] }
 tokio = { version = "1.48.0", features = ["signal"] }
 tokio-util = "0.7.17"
 native_db = "0.8.2"
 native_model = "0.4.20"
 sha2 = "0.10.9"
+hex = "0.4.3"

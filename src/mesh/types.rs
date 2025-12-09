@@ -12,6 +12,7 @@ pub enum TextMessageStatus {
     RoutingError(routing::Error),
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct TextMessage {
     pub ts: Instant,
@@ -45,6 +46,8 @@ impl TextMessage {
     }
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
 pub enum Destination {
     ShortName(String),
     Node(u32),

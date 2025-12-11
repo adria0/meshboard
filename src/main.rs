@@ -6,6 +6,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 mod bbs;
+mod display;
 mod mesh;
 mod tool;
 
@@ -21,10 +22,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start BBS Service
+    /// Display test
+    TestDisplay,
     Start,
     /// Run REPL utility
-    Tool,
+    MeshTool,
 }
 
 #[tokio::main]
@@ -37,8 +39,9 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
+        Commands::TestDisplay => display::test_display()?,
         Commands::Start => bbs::run_bbs().await?,
-        Commands::Tool => tool::run_tool().await?,
+        Commands::MeshTool => tool::run_tool().await?,
     }
 
     Ok(())

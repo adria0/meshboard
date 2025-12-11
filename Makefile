@@ -1,5 +1,5 @@
 IMAGE_NAME := xcc
-BINARY_PATH := target/aarch64-unknown-linux-gnu/release/mbbs
+BINARY_PATH := target/aarch64-unknown-linux-gnu/release/meshboard
 ENV_FILE := .env
 
 # Load variables from .env if it exists

@@ -9,3 +9,7 @@ sudo hciconfig hci0 up
 sudo bluetoothctl
   > scan on
   > pair <MAC_ADDRESS>
+  
+# gpio
+sudo raspi-config # interface options enable SPI
+sudo usermod -a -G spi $USER

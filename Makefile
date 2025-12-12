@@ -25,8 +25,7 @@ run:
 
 deploy:
 	@echo "==> Deploying binary to $(DEPLOYMENT_PATH)..."
-	@timestamp=$$(date +"%Y-%m-%d-%H-%M"); \
-	scp $(BINARY_PATH) $${DEPLOYMENT_PATH}_$${timestamp}
+	scp -p $(BINARY_PATH) $${DEPLOYMENT_PATH}
 	@echo "==> Deployment completed successfully."
 
 clean:

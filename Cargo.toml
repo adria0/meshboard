@@ -32,4 +32,6 @@ hex = "0.4.3"
 epd-waveshare = "0.6.0"
 embedded-graphics = "0.8.1"
 embedded-hal = "1.0.0"
+
+[target.'cfg(target_os = "linux")'.dependencies]
 linux-embedded-hal = "0.4.1"

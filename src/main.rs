@@ -5,9 +5,11 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+use crate::screen::NoScreen;
+
 mod bbs;
-mod display;
 mod mesh;
+mod screen;
 mod tool;
 
 include!(concat!(env!("OUT_DIR"), "/build_info.rs"));
@@ -23,10 +25,26 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Display test
-    TestDisplay,
     Start,
+    /// Display test
+    StartNoDisplay,
     /// Run REPL utility
     MeshTool,
+}
+
+#[cfg(target_os = "linux")]
+async fn run_bbs_display() -> Result<()> {
+    let display = crate::screen::epd::EpdScreen::new()?;
+    bbs::run_bbs(display).await?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn run_bbs_display() -> Result<()> {
+    use crate::screen::NoScreen;
+
+    bbs::run_bbs(NoScreen {}).await?;
+    Ok(())
 }
 
 #[tokio::main]
@@ -39,8 +57,8 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::TestDisplay => display::test_display()?,
-        Commands::Start => bbs::run_bbs().await?,
+        Commands::Start => run_bbs_display().await?,
+        Commands::StartNoDisplay => bbs::run_bbs(NoScreen {}).await?,
         Commands::MeshTool => tool::run_tool().await?,
     }
 

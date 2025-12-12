@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow, bail};
-use log::error;
+use log::{debug, error};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, VecDeque},
@@ -270,13 +270,16 @@ impl Service {
 
         check!(self.status_tx.send(Status::Heartbeat(0)));
         loop {
+            debug!(target: "meshloop", "waiting...");
             tokio::select! {
                 from_radio = self.packet_rx.recv() => {
                     packet_count += 1;
                     let Some(from_radio) = from_radio else {
+                        debug!(target: "meshloop","BLE stream closed");
                         ret = Err(anyhow!("BLE stream closed"));
                         break;
                     };
+                    debug!(target: "meshloop","Radio Rx: {:?}", from_radio);
                     check!(self.status_tx.send(Status::FromRadio(from_radio.clone())));
 
                     if let Err(error) = self.process_from_radio(from_radio.clone()).await {
@@ -284,6 +287,8 @@ impl Service {
                     }
                 }
                 msg = self.msg_rx.recv() => {
+                    debug!(target: "meshloop","msg_rx");
+
                     let Some(msg) = msg else {
                         ret = Err(anyhow!("Text message stream closed"));
                         break;
@@ -291,6 +296,7 @@ impl Service {
                     send_msg_queue.push_back(msg);
                 }
                 _ = tokio::time::sleep(Duration::from_millis(500)) => {
+                    debug!(target: "meshloop","hearthbeat");
                     hearthbeat_counter += 1;
 
                     // Each 500 ms

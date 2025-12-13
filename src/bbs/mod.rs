@@ -10,11 +10,12 @@ use crate::screen::Screen;
 pub mod service;
 pub mod storage;
 
-const SPINNER: [&str; 12] = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷", "⣾", "⣽", "⣻", "⢿"];
+const SPINNER: [&str; 4] = ["-", "\\", "", ""];
 
 fn info<D: Screen>(display: &mut D, row: usize, message: &str) {
     info!("{}", message);
-    display.draw_text_at(message, 0, row as i32);
+    let padded = format!("{:<42}", message);
+    display.draw_text_at(&padded, row as i32, 0);
     let _ = display.refresh();
 }
 
@@ -44,12 +45,15 @@ pub(crate) async fn run_bbs<D: Screen>(mut display: D) -> Result<()> {
                 let Some(status) = status else { bail!("Channel closed"); };
                 match status {
                     Status::NewMessage(id) => {
-                        let state = handler.state.read().await;
-                        let msg = state.messages.get(&id).unwrap();
-                        if msg.to != state.my_node_num().await {
-                            continue;
-                        }
-                        let short_name = state.get_short_name_by_node_id(msg.from).unwrap_or("?".to_string());
+                        let (msg, short_name) = {
+                            let state = handler.state.read().await;
+                            let msg = state.messages.get(&id).unwrap().clone();
+                            if msg.to != state.my_node_num().await {
+                                continue;
+                            }
+                            let short_name = state.get_short_name_by_node_id(msg.from).unwrap_or("?".to_string());
+                            (msg, short_name)
+                        };
                         let pk_hash = msg.pk_hash;
                         let response_msgs = bbs.handle(pk_hash,&short_name, &msg.text).await?;
                         info(&mut display, 1, &format!("{}:{}", short_name, hex::encode(pk_hash)));

@@ -29,7 +29,10 @@ impl Screen for NoScreen {
 
 #[cfg(target_os = "linux")]
 pub mod epd {
+    use std::path::Path;
+
     use super::*;
+    use anyhow::bail;
     use embedded_graphics::{
         mono_font::MonoTextStyleBuilder,
         prelude::*,
@@ -59,6 +62,9 @@ pub mod epd {
     impl EpdScreen {
         pub fn new() -> Result<Self> {
             // Configure SPI
+            if !Path::new("/dev/spidev0.0").exists() {
+                bail!("/dev/spidev0.0 device not found, enable SPI");
+            }
             let mut spi = SpidevDevice::open("/dev/spidev0.0")?;
             let options = SpidevOptions::new()
                 .bits_per_word(8)
@@ -135,8 +141,7 @@ pub mod epd {
                 .draw(&mut self.display);
         }
         fn draw_text_at(&mut self, text: &str, row: i32, col: i32) {
-            let padded = format!("{:<42}", text);
-            self.draw_text(&padded, col * 6, row * 10);
+            self.draw_text(text, col * 6, row * 10);
         }
         fn sleep(&mut self) -> Result<()> {
             let mut delay = Delay {};

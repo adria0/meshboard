@@ -261,7 +261,17 @@ impl Service {
 
         Ok(handler)
     }
-    pub async fn start(mut self) -> Result<()> {
+
+    pub async fn start(self) -> Result<()> {
+        if let Err(error) = self.start1().await {
+            error!("Process finished with error: {}", error);
+            Err(error)
+        } else {
+            Ok(())
+        }
+    }
+
+    pub async fn start1(mut self) -> Result<()> {
         let mut buffer_flushed = false;
         let mut packet_count = 0;
         let mut hearthbeat_counter = 0;
@@ -287,8 +297,6 @@ impl Service {
                     }
                 }
                 msg = self.msg_rx.recv() => {
-                    debug!(target: "meshloop","msg_rx");
-
                     let Some(msg) = msg else {
                         ret = Err(anyhow!("Text message stream closed"));
                         break;
@@ -296,7 +304,6 @@ impl Service {
                     send_msg_queue.push_back(msg);
                 }
                 _ = tokio::time::sleep(Duration::from_millis(500)) => {
-                    debug!(target: "meshloop","hearthbeat");
                     hearthbeat_counter += 1;
 
                     // Each 500 ms
